@@ -125,41 +125,43 @@ namespace Blake2Sharp
 			Array.Clear(_buf, 0, _buf.Length);
 		}
 
+		public override void Update(ReadOnlySpan<byte> data)
+		{
+			int left = _buflen;
+			int fill = BufSize - left;
+
+			// If the buffer has a partial stripe and the new data fills it, flush.
+			if (left > 0 && data.Length >= fill)
+			{
+				data.Slice(0, fill).CopyTo(_buf.AsSpan(left));
+				for (int i = 0; i < ParallelismDegree; i++)
+					_leaves[i].HashCore(_buf.AsSpan(i * Blake2SCore.BlockSizeInBytes, Blake2SCore.BlockSizeInBytes));
+				data = data.Slice(fill);
+				left = 0;
+			}
+
+			// Process complete 512-byte stripe sets directly from the caller's buffer.
+			while (data.Length >= BufSize)
+			{
+				for (int i = 0; i < ParallelismDegree; i++)
+					_leaves[i].HashCore(data.Slice(i * Blake2SCore.BlockSizeInBytes, Blake2SCore.BlockSizeInBytes));
+				data = data.Slice(BufSize);
+			}
+
+			// Buffer any remaining bytes (< 512).
+			if (data.Length > 0)
+				data.CopyTo(_buf.AsSpan(left));
+
+			_buflen = left + data.Length;
+		}
+
 		public override void Update(byte[] data, int start, int count)
 		{
 			if (data == null) throw new ArgumentNullException("data");
 			if (start < 0) throw new ArgumentOutOfRangeException("start");
 			if (count < 0) throw new ArgumentOutOfRangeException("count");
 			if ((long)start + count > data.Length) throw new ArgumentOutOfRangeException("start+count");
-
-			int left = _buflen;
-			int fill = BufSize - left;
-
-			// If the buffer has a partial stripe and the new data fills it, flush.
-			if (left > 0 && count >= fill)
-			{
-				Array.Copy(data, start, _buf, left, fill);
-				for (int i = 0; i < ParallelismDegree; i++)
-					_leaves[i].HashCore(_buf, i * Blake2SCore.BlockSizeInBytes, Blake2SCore.BlockSizeInBytes);
-				start  += fill;
-				count  -= fill;
-				left    = 0;
-			}
-
-			// Process complete 512-byte stripe sets directly from the caller's buffer.
-			while (count >= BufSize)
-			{
-				for (int i = 0; i < ParallelismDegree; i++)
-					_leaves[i].HashCore(data, start + i * Blake2SCore.BlockSizeInBytes, Blake2SCore.BlockSizeInBytes);
-				start += BufSize;
-				count -= BufSize;
-			}
-
-			// Buffer any remaining bytes (< 512).
-			if (count > 0)
-				Array.Copy(data, start, _buf, left, count);
-
-			_buflen = left + count;
+			Update(new ReadOnlySpan<byte>(data, start, count));
 		}
 
 		public override byte[] Finish()
@@ -174,13 +176,14 @@ namespace Blake2Sharp
 					int remaining = _buflen - i * Blake2SCore.BlockSizeInBytes;
 					if (remaining > Blake2SCore.BlockSizeInBytes)
 						remaining = Blake2SCore.BlockSizeInBytes;
-					_leaves[i].HashCore(_buf, i * Blake2SCore.BlockSizeInBytes, remaining);
+					_leaves[i].HashCore(_buf.AsSpan(i * Blake2SCore.BlockSizeInBytes, remaining));
 				}
 
 				// Leaf 7 is the last leaf — set its last-node finalization flag.
 				bool isLastLeaf = (i == ParallelismDegree - 1);
-				byte[] leafHash = _leaves[i].HashFinal(isLastLeaf);
-				_root.HashCore(leafHash, 0, leafHash.Length);
+				Span<byte> leafHash = stackalloc byte[Blake2SCore.OutputSizeInBytes];
+				_leaves[i].HashFinal(leafHash, isLastLeaf);
+				_root.HashCore(leafHash);
 			}
 
 			// Root always has its last-node flag set.

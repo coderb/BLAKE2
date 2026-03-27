@@ -23,24 +23,25 @@
 //   dia: G(v0,v5,v10,v15)  G(v1,v6,v11,v12)  G(v2,v7,v8, v13)  G(v3,v4,v9, v14)
 
 using System;
+using System.Runtime.InteropServices;
 
 namespace Blake2Sharp
 {
 	public sealed partial class Blake2SCore
 	{
-		partial void Compress(byte[] block, int start)
+		partial void Compress(ReadOnlySpan<byte> block)
 		{
 			var m = _m;
 			var h = _h;
 
 			if (BitConverter.IsLittleEndian)
 			{
-				Buffer.BlockCopy(block, start, m, 0, BlockSizeInBytes);
+				MemoryMarshal.Cast<byte, uint>(block).CopyTo(m);
 			}
 			else
 			{
 				for (int i = 0; i < 16; i++)
-					m[i] = BytesToUInt32(block, start + i * 4);
+					m[i] = (uint)block[i*4] | ((uint)block[i*4+1] << 8) | ((uint)block[i*4+2] << 16) | ((uint)block[i*4+3] << 24);
 			}
 
 			uint v0  = h[0];

@@ -8,6 +8,7 @@
 // this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 
 using System;
+using System.Runtime.InteropServices;
 
 namespace Blake2Sharp
 {
@@ -80,7 +81,7 @@ namespace Blake2Sharp
 		}
 
 		// Compress is implemented in Blake2SCore-Compress.cs
-		partial void Compress(byte[] block, int start);
+		partial void Compress(ReadOnlySpan<byte> block);
 
 		// Initialize the hash state from a pre-built 8-word parameter block.
 		// Per the BLAKE2 spec, the initial chaining value is IV XOR the parameter
@@ -116,29 +117,22 @@ namespace Blake2Sharp
 				_h[i] ^= config[i];
 		}
 
-		public void HashCore(byte[] array, int start, int count)
+		public void HashCore(ReadOnlySpan<byte> data)
 		{
 			if (!_isInitialized)
 				throw new InvalidOperationException("Not initialized");
-			if (array == null)
-				throw new ArgumentNullException("array");
-			if (start < 0)
-				throw new ArgumentOutOfRangeException("start");
-			if (count < 0)
-				throw new ArgumentOutOfRangeException("count");
-			if ((long)start + (long)count > array.Length)
-				throw new ArgumentOutOfRangeException("start+count");
 
-			int offset = start;
+			int offset = 0;
+			int count = data.Length;
 			int bufferRemaining = BlockSizeInBytes - _bufferFilled;
 
 			if ((_bufferFilled > 0) && (count > bufferRemaining))
 			{
-				Array.Copy(array, offset, _buf, _bufferFilled, bufferRemaining);
+				data.Slice(offset, bufferRemaining).CopyTo(_buf.AsSpan(_bufferFilled));
 				_counter0 += (uint)BlockSizeInBytes;
 				if (_counter0 == 0)
 					_counter1++;
-				Compress(_buf, 0);
+				Compress(_buf);
 				offset += bufferRemaining;
 				count -= bufferRemaining;
 				_bufferFilled = 0;
@@ -149,21 +143,41 @@ namespace Blake2Sharp
 				_counter0 += (uint)BlockSizeInBytes;
 				if (_counter0 == 0)
 					_counter1++;
-				Compress(array, offset);
+				Compress(data.Slice(offset, BlockSizeInBytes));
 				offset += BlockSizeInBytes;
 				count -= BlockSizeInBytes;
 			}
 
 			if (count > 0)
 			{
-				Array.Copy(array, offset, _buf, _bufferFilled, count);
+				data.Slice(offset, count).CopyTo(_buf.AsSpan(_bufferFilled));
 				_bufferFilled += count;
 			}
+		}
+
+		public void HashCore(byte[] array, int start, int count)
+		{
+			if (array == null)
+				throw new ArgumentNullException("array");
+			if (start < 0)
+				throw new ArgumentOutOfRangeException("start");
+			if (count < 0)
+				throw new ArgumentOutOfRangeException("count");
+			if ((long)start + (long)count > array.Length)
+				throw new ArgumentOutOfRangeException("start+count");
+			HashCore(new ReadOnlySpan<byte>(array, start, count));
 		}
 
 		public byte[] HashFinal()
 		{
 			return HashFinal(false);
+		}
+
+		public byte[] HashFinal(bool isEndOfLayer)
+		{
+			var hash = new byte[OutputSizeInBytes];
+			HashFinal(hash, isEndOfLayer);
+			return hash;
 		}
 
 		// isEndOfLayer corresponds to the last_node flag in the C reference (f[1]).
@@ -172,24 +186,32 @@ namespace Blake2Sharp
 		// v15 during the final compression, distinguishing those nodes from interior
 		// ones. For sequential (non-tree) hashing always pass false (or use the
 		// zero-argument overload).
-		public byte[] HashFinal(bool isEndOfLayer)
+		public void HashFinal(Span<byte> output, bool isEndOfLayer = false)
 		{
 			if (!_isInitialized)
 				throw new InvalidOperationException("Not initialized");
+			if (output.Length < OutputSizeInBytes)
+				throw new ArgumentException("output buffer too small");
 			_isInitialized = false;
 
 			_counter0 += (uint)_bufferFilled;
 			_finalizationFlag0 = true;
 			if (isEndOfLayer)
 				_finalizationFlag1 = true;
-			for (int i = _bufferFilled; i < _buf.Length; i++)
-				_buf[i] = 0;
-			Compress(_buf, 0);
+			_buf.AsSpan(_bufferFilled).Clear();
+			Compress(_buf);
 
-			byte[] hash = new byte[32];
-			for (int i = 0; i < 8; i++)
-				UInt32ToBytes(_h[i], hash, i * 4);
-			return hash;
+			if (BitConverter.IsLittleEndian)
+				MemoryMarshal.Cast<uint, byte>(new ReadOnlySpan<uint>(_h, 0, 8)).CopyTo(output);
+			else
+				for (int i = 0; i < 8; i++)
+				{
+					uint v = _h[i];
+					output[i * 4]     = (byte)v;
+					output[i * 4 + 1] = (byte)(v >> 8);
+					output[i * 4 + 2] = (byte)(v >> 16);
+					output[i * 4 + 3] = (byte)(v >> 24);
+				}
 		}
 	}
 }

@@ -27,6 +27,11 @@ namespace Blake2Sharp
 			Update(data, 0, data.Length);
 		}
 
+		public virtual void Update(ReadOnlySpan<byte> data)
+		{
+			Update(data.ToArray());
+		}
+
 		public HashAlgorithm AsHashAlgorithm()
 		{
 			return new HashAlgorithmAdapter(this);

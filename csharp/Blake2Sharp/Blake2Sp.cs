@@ -7,6 +7,8 @@
 // You should have received a copy of the CC0 Public Domain Dedication along with
 // this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 
+using System;
+
 namespace Blake2Sharp
 {
 	// Public factory and one-shot API for BLAKE2sp (parallel BLAKE2s, 8 leaves).
@@ -25,6 +27,18 @@ namespace Blake2Sharp
 		public static byte[] ComputeHash(byte[] data)
 		{
 			return ComputeHash(data, 0, data.Length, null);
+		}
+
+		public static byte[] ComputeHash(ReadOnlySpan<byte> data)
+		{
+			return ComputeHash(data, null);
+		}
+
+		public static byte[] ComputeHash(ReadOnlySpan<byte> data, Blake2SConfig config)
+		{
+			var hasher = Create(config);
+			hasher.Update(data);
+			return hasher.Finish();
 		}
 
 		public static byte[] ComputeHash(byte[] data, Blake2SConfig config)

@@ -43,21 +43,29 @@ namespace Blake2Sharp
 				_core.HashCore(_key, 0, _key.Length);
 		}
 
+		public override void Update(ReadOnlySpan<byte> data)
+		{
+			_core.HashCore(data);
+		}
+
 		public override void Update(byte[] data, int start, int count)
 		{
-			_core.HashCore(data, start, count);
+			if (data == null) throw new ArgumentNullException("data");
+			if (start < 0) throw new ArgumentOutOfRangeException("start");
+			if (count < 0) throw new ArgumentOutOfRangeException("count");
+			if ((long)start + count > data.Length) throw new ArgumentOutOfRangeException("start+count");
+			_core.HashCore(new ReadOnlySpan<byte>(data, start, count));
 		}
 
 		public override byte[] Finish()
 		{
-			var fullResult = _core.HashFinal();
-			if (_outputSizeInBytes != fullResult.Length)
-			{
-				var result = new byte[_outputSizeInBytes];
-				Array.Copy(fullResult, result, result.Length);
-				return result;
-			}
-			return fullResult;
+			if (_outputSizeInBytes == Blake2SCore.OutputSizeInBytes)
+				return _core.HashFinal();
+			Span<byte> fullResult = stackalloc byte[Blake2SCore.OutputSizeInBytes];
+			_core.HashFinal(fullResult);
+			var result = new byte[_outputSizeInBytes];
+			fullResult.Slice(0, _outputSizeInBytes).CopyTo(result);
+			return result;
 		}
 	}
 }
